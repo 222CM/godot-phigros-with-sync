@@ -2,11 +2,12 @@ extends Node2D
 # ============================================================
 # world.gd — 游戏世界主逻辑
 # World 场景是动态创建的（由 ImportScreen 在点击播放/渲染时实例化）
-# 职责：
-#   1. 持有谱面数据（chart 字典）
-#   2. 每帧驱动 update_simulation()，同步 Globals.current_time
-#   3. 提供 spawn_hit_effect() 在指定位置生成打击特效
-#   4. 后续：生成判定线、生成音符、判定逻辑全部在这里
+#
+# 后端计算由 Sync 引擎（sync_core + sync_play_kit）承担：
+#   1. PhigrosChart 转换器把谱面 JSON 转成 SyncDocumentChart（Globals.chart）
+#   2. 本场景用 SyncChartPlayer 编译成只读 SyncChart
+#   3. 每帧 update_simulation() 以 chart_ms 采样线动画与音符位置
+# 本场景保留：判定线/音符实例化、多押标记、计分/combo、HUD、特效入口。
 # ============================================================
 
 signal play_finished
@@ -18,6 +19,10 @@ var line_scene = preload("res://lines/line.tscn")
 #线列表
 var lines = []
 
+# Sync 编译后的只读谱面（后端数据源，由 line/note 采样）
+var play_chart: SyncChart
+var chart_offset_ms := 0.0
+
 #分数 & combo
 var score = 0
 var combo = 0
@@ -27,25 +32,37 @@ var total_duration = 0.0
 func _ready():
 	#清除旧数据
 	Globals.all_notes.clear()
-	#生成所有判定线	
-	for i in Globals.chart.judgeLineList:
+
+	# 编译 SyncDocumentChart → SyncChart（编译在 set_document_chart 内完成）
+	var player := SyncChartPlayer.new()
+	add_child(player)
+	player.set_document_chart(Globals.chart)
+	play_chart = player.get_play_chart()
+	chart_offset_ms = play_chart.get_offset_ms()
+
+	# 多押标记：hit_time_ms 相同的相邻音符成对标记（与原实现按 time 相等语义一致）
+	var times := []
+	for tid in play_chart.get_track_ids():
+		for nid in play_chart.get_note_ids_for_track(tid):
+			var hit_ms := float(play_chart.get_note_info(nid).hit_time_ms)
+			times.append({"note_id": nid, "hit_time_ms": hit_ms})
+			Globals.all_notes.append({"note_id": nid, "hit_time_ms": hit_ms})
+	times.sort_custom(func(a, b): return a.hit_time_ms < b.hit_time_ms)
+	var multihit := {}
+	if times.size() >= 2:
+		for i in range(times.size() - 1):
+			if is_equal_approx(times[i].hit_time_ms, times[i + 1].hit_time_ms):
+				multihit[times[i].note_id] = true
+				multihit[times[i + 1].note_id] = true
+
+	#生成所有判定线（一条线 = 一个 Sync 轨道）
+	for tid in play_chart.get_track_ids():
 		var l = line_scene.instantiate()
-		l.data = i
+		l.setup(self, tid, play_chart, multihit)
 		$lines_container.add_child(l)
 		lines.append(l)
-	
-	#按时间排序Globals.notes并判断是否多押
-	Globals.all_notes.sort_custom(func(a, b): return a.time < b.time)
-	Globals.all_notes[0].multihit = false
-	for i in range(Globals.all_notes.size()-1):
-		if Globals.all_notes[i].time == Globals.all_notes[i + 1].time:
-			Globals.all_notes[i].multihit = true
-			Globals.all_notes[i + 1].multihit = true
-	
-	for i in lines:
-		i.spawn_notes()
 
-	#加载曲绘作为模糊变暗背景（Dual Kawase Blur 插件 → 实时模糊，零性能压力）
+	#加载曲绘作为模糊变暗背景（Dual Kawase Blur 插件 → 实时模糊）
 	if Globals.background_path != "":
 		var img = Image.load_from_file(Globals.background_path)
 		if img:
@@ -58,6 +75,7 @@ func _ready():
 			# 调模糊强度（默认 8.0，越大越糊）
 			$bg_layer/BlurY.material.set_shader_parameter("radius", 100.0)
 			$bg_layer/BlurY/SubViewport/BlurX.material.set_shader_parameter("radius", 100.0)
+
 	#连接结束播放的信号
 	$music_player.finished.connect(func(): play_finished.emit())
 
@@ -68,7 +86,7 @@ func _ready():
 			total_duration = AudioStreamOggVorbis.load_from_file(Globals.music_path).get_length()
 
 	#计算每个 note 的分数（满分 1000000）
-	score_per_note = 1000000.0 / max(1, Globals.all_notes.size())
+	score_per_note = 1000000.0 / max(1, play_chart.get_total_note_count())
 
 	#创建 HUD（combo/分数/AUTOPLAY）
 	_create_hud()
@@ -86,12 +104,12 @@ func _process(delta):
 # RENDER 模式：RenderManager 在自己的循环里直接设 Globals.current_time
 
 
-
 # 每帧调用核心更新函数
 func update_simulation():
+	# chart 时间 = 音乐时间 + 谱面 offset（Sync 约定：chart = audio + offset）
+	var chart_ms: float = Globals.current_time * 1000.0 + chart_offset_ms
 	for l in lines:
-		l.update_events()   #更新所有线的事件
-		l.update_notes()	#更新所有线的note位置
+		l.update_simulation(chart_ms)
 	# 更新进度条
 	if total_duration > 0:
 		var p = Globals.current_time / total_duration
@@ -99,8 +117,6 @@ func update_simulation():
 		$hud/progress_tip.anchor_left = p
 		$hud/progress_tip.anchor_right = p
 	pass
-
-
 
 
 # ============================================================
@@ -120,7 +136,7 @@ func spawn_hit_effect(global_pos: Vector2):
 # 分数 & Combo
 # ============================================================
 
-# 由 line.gd 在 note 被判定时调用
+# 由 notes.gd 在 note 被判定时调用
 func on_note_judged():
 	combo += 1
 	score = int(min(score + score_per_note, 1000000))

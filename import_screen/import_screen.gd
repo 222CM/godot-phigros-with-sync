@@ -12,6 +12,9 @@ extends CanvasLayer
 var world_scene = preload("res://world.tscn")
 var world = null        # 当前活跃的 World 实例，用于渲染结束后清理
 
+# Phigros JSON → SyncDocumentChart 转换器（-s 脚本模式不注册全局 class_name，显式 preload）
+const PhigrosChart := preload("res://chart/phigros_chart.gd")
+
 func _ready():
 	# 六个按钮的信号连接：
 	# 前三个 → 手动选文件；zip → 一键导入；play/render → 启动
@@ -174,7 +177,7 @@ func _start(mode: String):
 
 
 # ============================================================
-# _parse_chart — 解析谱面 JSON，存入 Globals.chart
+# _parse_chart — 解析谱面 JSON → SyncDocumentChart（存入 Globals.chart）
 # ============================================================
 func _parse_chart(path: String):
 	var f = FileAccess.open(path, FileAccess.READ)
@@ -183,9 +186,16 @@ func _parse_chart(path: String):
 		return
 	var text = f.get_as_text()
 	f.close()
-	Globals.chart = JSON.parse_string(text)
-	if Globals.chart == null:
+	var raw = JSON.parse_string(text)
+	if raw == null or not raw is Dictionary:
 		print("JSON 解析失败: ", path)
+		return
+	Globals.chart = PhigrosChart.to_document(raw)
+	var track_count: int = Globals.chart.root_tracks.size()
+	var note_count := 0
+	for track in Globals.chart.root_tracks:
+		note_count += track.get_note_count()
+	print("谱面解析完成: %d 条判定线, %d 个音符" % [track_count, note_count])
 
 
 # ============================================================

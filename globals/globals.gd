@@ -28,8 +28,8 @@ var background_path = ""       # 背景图片路径（暂未使用）
 var music_path = ""            # 音乐文件路径（ogg/mp3/wav）
 
 # --- 谱面数据 ---
-# JSON 解析后的字典，结构与 Phigros chart 文件一致：
-#   chart.formatVersion, chart.offset, chart.judgeLineList[...]
+# SyncDocumentChart（由 PhigrosChart 转换器从谱面 JSON 转换而来）。
+# 后端计算（BPM/时间换算、线动画采样、音符位置）全部由 Sync 引擎承担。
 var chart
 
 # ============================================================
