@@ -21,3 +21,6 @@ Thumbs.db
 # Temp / cache
 *.tmp
 *.log
+
+# Godot 编辑器为 GDExtension 生成的临时副本（~ 前缀，用于热重载/解锁原文件）
+~*
