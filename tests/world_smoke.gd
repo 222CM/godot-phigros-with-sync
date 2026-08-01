@@ -72,6 +72,11 @@ func _run() -> void:
 				break
 			act += l.active_notes.size()
 			pool_size += l.pool.get_active_count() + l.pool.get_free_count()
+			# hold 从池取出后必须立即具备正确长度（不在判定后才补齐）
+			for nid in l.active_notes:
+				var n = l.active_notes[nid]
+				if n.note_type == 3 and (n.hold == null or n.hold.length <= 0.0):
+					_fail("hold %s 在 acquire 后未设置长度（%s）" % [nid, l.track_id])
 		max_active = max(max_active, act)
 		peak_pool_size = max(peak_pool_size, pool_size)
 		if world.combo >= total_notes:

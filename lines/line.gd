@@ -101,6 +101,7 @@ func _acquire_note(note_id: String, chart_ms: float) -> void:
 		return
 	n.bind(note_id, info, self)
 	$notes_container.add_child(n)
+	n.finish_bind()   # 入树后补设 hold 初始长度（若为 hold 类型）
 	active_notes[note_id] = n
 
 

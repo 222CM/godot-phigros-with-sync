@@ -42,10 +42,6 @@ var last_hitfx_ms := -INF  # hold 跟随特效节流（毫秒）
 
 func _ready() -> void:
 	scale = Vector2(0.12, 0.12)     # 注意：缩放到合适大小
-	# 首次从池取出时 bind 在入树前执行，hold 子节点此时才完成初始化，
-	# 这里补设 hold 初始长度（子节点先于父节点 _ready，hold 已可用）
-	if note_type == 3:
-		_apply_hold_length()
 
 
 # ============================================================
@@ -70,9 +66,15 @@ func bind(p_note_id: String, p_info: Dictionary, p_line) -> void:
 	if int(info.metadata.get("above", -1)) == 1:
 		rotation = deg_to_rad(-180)
 
-	# hold 初始长度：节点已在树中（池复用）时立即设置；
-	# 首次从池取出（bind 于入树前调用）时 hold 子节点尚未 _ready，等 _ready() 补设
-	if note_type == 3 and is_inside_tree():
+	# hold 初始长度不在此设置：acquire 已把节点从池移除（不在树中），
+	# 若 hold 子节点是新实例化的，其 _ready() 尚未执行（region_rect 未初始化，
+	# set_length 会除零）。由 line 在 add_child 入树后调用 finish_bind() 补设。
+
+
+# 入树后钩子（line 在 $notes_container.add_child 之后调用）：
+# hold 子节点已完成初始化，补设初始长度，保证从池取出即正确显示
+func finish_bind() -> void:
+	if note_type == 3:
 		_apply_hold_length()
 
 
