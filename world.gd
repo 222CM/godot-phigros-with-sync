@@ -126,8 +126,11 @@ func _process(delta):
 func update_simulation():
 	# chart 时间 = 音乐时间 + 谱面 offset（Sync 约定：chart = audio + offset）
 	var chart_ms: float = Globals.current_time * 1000.0 + chart_offset_ms
+	# Sync C++ 批量可见查询（每帧一次，内部循环无 GDScript 逐音符边界开销），
+	# 结果分发给各线（线内过滤 + 时间兜底 + 节点池 diff）
+	var visible := play_chart.get_visible_note_ids(chart_ms)
 	for l in lines:
-		l.update_simulation(chart_ms)
+		l.update_simulation(chart_ms, visible)
 	_update_progress()
 
 

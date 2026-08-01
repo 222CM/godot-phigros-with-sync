@@ -6,15 +6,19 @@ extends Node2D
 #   - position / rotation / alpha：SyncChart 轴采样
 #   - 音符位置：get_note_normalized_position()（速度轴积分）
 #
-# 音符节点生命周期采用「时间窗口驱动 + SyncNodePool」：
-#   - Phigros 谱面存在 speed=9999 的瞬移/传送段，音符位置会一帧内跳变
-#     穿越整个可视窗口，基于位置的可见性判定会漏检这类音符。
-#     Sync 0.6.0 的 get_note_ids_in_time_window 按 hit 时间二分查询，
-#     天然免疫速度跳变，本层直接用该 API 驱动节点池：
-#   - acquire：hit_time ∈ [chart_ms, chart_ms + LEAD_MS] 的音符，
-#     保证音符在命中判定线前 LEAD_MS 即实例化、完整呈现飞行过程
-#   - release：判定完成（judged）后释放回池
-#   屏幕外音符不实例化、不参与每帧计算：节点数 ≈ 时间窗口内音符数，而非谱面总量。
+# 音符节点生命周期采用「批量可见查询 + 时间兜底 + SyncNodePool」：
+#   - Phigros 官谱音符没有"永久渲染"标签，表演谱存在 speed=9999 瞬移/传送段，
+#     音符可能提前数秒~百余秒出现在屏幕上等待（996 谱实测 73/996 音符在 hit 前
+#     >5s 已进入屏幕范围），纯时间窗口必然钳制它们
+#   - acquire 集合 = Sync 批量可见集 ∪ 时间兜底：
+#       可见集：world 每帧一次 get_visible_note_ids（C++ 内循环，GDScript 侧
+#         无逐音符调用边界；实测 2330 音符批量 0.005ms vs 逐音符 1.6ms），
+#         归一化位置在 [-1,1] 内的音符即渲染，与 hit 时间无关（覆盖表演等待音符）
+#       时间兜底：hit 前 FALLBACK_MS 内（get_note_ids_in_time_window，C++ 二分），
+#         覆盖 speed=9999 一帧穿越窗口、批量查询 cursor 漏检的情况
+#   - 判定先行、释放后置（避免 hit/end 帧被释放逻辑抢先回收而漏判）；
+#     release：判定完成（HOLD 按住阶段保持激活），或离开窗口
+#   屏幕外音符不渲染、不参与每帧计算：节点数 ≈ 屏幕内音符数，而非谱面总量。
 # ============================================================
 
 var window_size = Vector2(960, 540)
@@ -23,8 +27,9 @@ var pix_per_Y = window_size.y * 0.6       # = 324 px/单位（floorPosition → 
 
 const ABOVE := -1
 const BELOW := 1
-# 提前量：音符命中判定线前 LEAD_MS 即实例化（Phigros 音符通常提前 1~2 秒可见）
-const LEAD_MS := 1500.0
+# 时间兜底：hit 前 FALLBACK_MS 内补漏（瞬移穿越窗口、批量可见查询漏检时；
+# 同时作为普通音符的提前量——hit 前 1.5s 即实例化，呈现完整飞行过程）
+const FALLBACK_MS := 1500.0
 
 var world                    # world 节点引用（判定/特效回调），由 world 注入
 var chart: SyncChart         # 编译后的谱面，由 world 注入
@@ -33,7 +38,7 @@ var line_bpm := 140.0        # 本线 bpm（hold 跟随特效节流用）
 var multihit_map := {}       # note_id → 是否多押，由 world 注入
 
 var pool: SyncNodePool       # 音符节点池（绑定 notes.tscn），空闲节点隐藏
-var active_notes := {}       # note_id → 活跃音符节点（时间窗口内）
+var active_notes := {}       # note_id → 活跃音符节点（可见窗口内）
 
 var notes_scene = preload("res://notes/notes.tscn")
 
@@ -62,32 +67,47 @@ func _ready() -> void:
 	pool.prewarm(clampi(chart.get_note_ids_for_track(track_id).size() / 40, 2, 16))
 
 
-# 每帧：采样线动画 + 时间窗口驱动的音符池（acquire/释放/位置/判定）
-func update_simulation(chart_ms: float) -> void:
+# 每帧：采样线动画 + 批量可见查询驱动的音符池
+# visible_global 为 world 每帧一次 get_visible_note_ids 的全局可见集（跨线共享）
+func update_simulation(chart_ms: float, visible_global: Array) -> void:
 	# 线动画采样（后端数据 → 渲染节点）
 	position = chart.sample_track_vector2_axis(track_id, "position", chart_ms)
 	rotation = deg_to_rad(-chart.sample_track_float_axis(track_id, "rotation", chart_ms))
 	$shape.modulate.a = chart.sample_track_float_axis(track_id, "alpha", chart_ms)
 
-	# 时间窗口内将命中的音符（Sync 0.6.0 按 hit 时间二分，免疫 speed 瞬移）
-	var pending: Array = chart.get_note_ids_in_time_window(track_id, chart_ms, chart_ms + LEAD_MS)
+	# 应活跃集合 = 本线可见（Sync 批量） ∪ 时间兜底
+	var prefix := track_id + ":"
+	var in_window := {}
+	for note_id in visible_global:
+		if String(note_id).begins_with(prefix):
+			in_window[note_id] = true
+	for note_id in chart.get_note_ids_in_time_window(track_id, chart_ms, chart_ms + FALLBACK_MS):
+		if not in_window.has(note_id):
+			in_window[note_id] = true
 
-	# 1. 释放：判定完成的音符恢复初始形态并还回池
-	#    （防御：异常未判定且已过 end_time 的音符也释放，避免节点滞留）
+	# 1. 驱动（判定先行）：音符在 hit/end 帧先完成判定，
+	#    避免被下方释放逻辑抢先回收而漏判
+	for n in active_notes.values():
+		n.update_simulation(chart_ms)
+
+	# 2. 释放：判定完成（HOLD 按住阶段保持激活），或离开窗口
 	for note_id in active_notes.keys():
 		var n = active_notes[note_id]
-		if n.judged or chart_ms > float(n.info.end_time_ms) + 200.0:
+		if n.judged:
+			_release_note(n)
+			active_notes.erase(note_id)
+		elif not in_window.has(note_id):
+			# HOLD 已进入按住阶段（hit 后、end 前）：body 贴线渲染，等待尾判
+			if n.note_type == 3 and chart_ms >= float(n.info.hit_time_ms) \
+					and chart_ms < float(n.info.end_time_ms):
+				continue
 			_release_note(n)
 			active_notes.erase(note_id)
 
-	# 2. 获取：窗口内音符从池中取并绑定数据
-	for note_id in pending:
+	# 3. 获取：窗口内但尚未实例化的音符从池中取并绑定数据
+	for note_id in in_window:
 		if not active_notes.has(note_id):
 			_acquire_note(note_id, chart_ms)
-
-	# 3. 驱动全部活跃音符（位置 / 判定）
-	for n in active_notes.values():
-		n.update_simulation(chart_ms)
 
 
 func _acquire_note(note_id: String, chart_ms: float) -> void:

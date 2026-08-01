@@ -59,9 +59,12 @@ func _run() -> void:
 		"world 生成 %d 条判定线（期望 %d）" % [world.lines.size(), play_chart.get_track_count()])
 
 	# 逐帧推进（等价 RenderManager 循环）
-	var max_active := 0        # 任意帧的峰值活跃节点数（时间窗口内）
+	var max_active := 0        # 任意帧的峰值活跃节点数（位置窗口内）
 	var peak_pool_size := 0    # 池实例化峰值 = 各线 (active + free) 之和
+	var t_start := Time.get_ticks_usec()
+	var frames_run := 0
 	for i in frames:
+		frames_run += 1
 		Globals.current_time = i / FPS
 		world.update_simulation()
 		var act := 0
@@ -88,8 +91,10 @@ func _run() -> void:
 	var remaining := 0
 	for l in world.lines:
 		remaining += l.active_notes.size()
+	var t_end := Time.get_ticks_usec()
 	print("帧后: combo=%d/%d, 峰值活跃节点=%d, 池峰值规模=%d, 剩余未判定节点=%d"
 		% [world.combo, total_notes, max_active, peak_pool_size, remaining])
+	print("帧耗时: %.2f ms/帧（%d 帧，纯逻辑不含渲染）" % [(t_end - t_start) / 1000.0 / frames_run, frames_run])
 
 	# 短谱（mini 夹具应在帧窗口内全部判定）；任意谱至少推进了判定
 	if total_notes <= 20:

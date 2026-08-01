@@ -43,13 +43,18 @@ SyncChart（只读编译谱面）
 - **音符位置**：`SyncChart.get_note_normalized_position()` 返回速度轴积分距离
   （等价于原实现 `note.floorPosition − 线累计 floor_position`），游戏侧乘以
   `above × speed_mult × 324px` 换算屏幕 y。
-- **音符节点池化（渲染层）**：不再一次性实例化整条线的全部音符。Phigros 官谱存在
-  `speed=9999` 的瞬移/传送段，音符位置会一帧内跳变穿越可视窗口，Sync 的可见性增量
-  cursor 会漏检这类音符，因此本层采用**时间窗口驱动**：每帧二分查找
-  hit_time 落在 `(chart_ms, chart_ms + LEAD_MS]` 内的音符（默认提前 1.5s 实例化，
-  保证完整呈现飞行过程），通过 diff 驱动 **SyncNodePool** 的 acquire/release——
-  判定完成的音符恢复初始形态后还池复用。屏幕外音符不实例化、不参与每帧计算，
-  节点数 ≈ 时间窗口内音符数（实测 996 音符谱峰值活跃仅 34），而非谱面总量。
+- **音符节点池化（渲染层）**：不再一次性实例化整条线的全部音符。Phigros 官谱音符
+  没有"永久渲染"标签，表演谱存在 `speed=9999` 瞬移/传送段——音符可能**提前数秒到
+  百余秒出现在屏幕上等待**（996 谱实测 73/996 音符在 hit 前 >5s 已进入屏幕范围），
+  基于 hit 时间的时间窗口必然钳制它们。因此本层采用**批量可见查询驱动**：
+  每帧一次 `get_visible_note_ids`（Sync C++ 内循环，GDScript 侧无逐音符调用边界，
+  实测 2330 音符批量 0.005ms vs 逐音符查询 1.6ms）覆盖位置在 [-1,1] 内的音符
+  （含表演等待音符，与 hit 时间无关）；另以 hit 前 1.5s 时间窗口兜底
+  （`get_note_ids_in_time_window`，防 speed=9999 一帧穿越、批量查询 cursor 漏检）。
+  判定先行、释放后置（避免 hit/end 帧被释放逻辑抢先回收而漏判），判定完成或
+  离开窗口后 reset/release 回池复用。屏幕外音符不实例化、不参与每帧计算：
+  节点数 ≈ 屏幕内音符数（996 谱峰值 52、2330 压力谱峰值 136），纯逻辑帧耗时
+  996 谱 0.27ms / 2330 压力谱 0.39ms（批量查询替代逐音符扫描后降 ~75%）。
 - **时间轴**：音乐播放位置 + 音频缓冲延迟补偿（PLAY 模式）/ 渲染帧时间（RENDER 模式），
   每帧 `chart_ms = current_time × 1000 + offset`（Sync 约定 chart = audio + offset）。
 - **判定**：Sync 引擎不内置判定，autoplay 判定在游戏侧按 `hit_time_ms` / `end_time_ms` 触发。
