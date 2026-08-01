@@ -1,6 +1,6 @@
 # godot-phigros-with-sync
 
-Phigros 官谱自动播放器，基于 Godot 4.6.3 开发。只支持官谱。
+Phigros 官谱自动播放器，基于 Godot 开发。只支持官谱。
 
 后端计算（BPM/时间换算、判定线动画采样、音符位置计算）由
 **[Sync](https://github.com/222CM/Sync) 节奏游戏引擎**（`addons/sync` 单一 GDExtension，0.6.4+）承担，
@@ -8,10 +8,10 @@ Phigros 官谱自动播放器，基于 Godot 4.6.3 开发。只支持官谱。
 
 ## 项目由来
 
-本项目由原项目 **godot-phigros** 改造而来。原项目为 Phigros 官谱自动播放器，
-同样基于 Godot 4.6.3 开发，其后端计算框架——包括 BPM/时间换算
-（`sec_per_Tick = 1.875 / bpm`）、speed 事件位移积分（手写梯形面积累计
-floorPosition）、判定线动画事件插值与音符位置计算——全部以 GDScript 实现。
+本项目由原项目 **[godot-phigros](https://github.com/CMYC4237/godot-phigros)** 改造而来。
+原项目为 Phigros 官谱自动播放器，同样基于 Godot 开发，其后端计算框架——包括
+BPM/时间换算（`sec_per_Tick = 1.875 / bpm`）、speed 事件位移积分（手写梯形面积
+累计 floorPosition）、判定线动画事件插值与音符位置计算——全部以 GDScript 实现。
 
 本次改造的核心工作是**将上述后端计算框架整体替换为 Sync 引擎**
 （C++ GDExtension，`BpmEventList` / `SpeedEventList` / 轴采样等），
@@ -32,7 +32,7 @@ debug 构建下的实测帧率（含渲染）：
 衰减）；改造后帧率基本恒定——节点池 + 位置窗口使每帧计算量仅与屏幕内
 音符数相关，与谱面总音符量解耦。
 
-headless 纯逻辑（不含渲染）的逐音符成本对照，同一谱面（Godot 4.6.3，
+headless 纯逻辑（不含渲染）的逐音符成本对照，同一谱面（Godot，
 RENDER 模式逐帧驱动，`ms/帧`）：
 
 | 场景 | 原项目 | 改造后 | 差异 |
@@ -101,12 +101,12 @@ SyncChart（只读编译谱面）
 |---|---|---|
 | sync（单扩展） | https://github.com/222CM/Sync | 0.6.4：get_visible_note_ids 位置窗口参数化（window_lo/hi）、get_note_ids_in_time_window（按 hit 时间二分）、SyncDocumentChart.compile() 独立编译入口；0.6.4 修复负速段批量可见查询二分游标漏检 |
 
-本项目 `addons/` 下已附带官方 0.6.4 构建（Windows x86_64 debug + release，godot-cpp 4.3，4.6.3/4.7 兼容）。
+本项目 `addons/` 下已附带官方 0.6.4 构建（Windows x86_64 debug + release，godot-cpp 4.3，兼容 Godot 4.3+）。
 重新构建见仓库 README（`scons -f SConstruct.extension target=… platform=…`）。
 
 ## 运行
 
-1. 用 Godot 4.6.3 打开项目（首次需生成 `.godot/extension_list.cfg`，编辑器会自动完成）
+1. 用 Godot 打开项目（首次需生成 `.godot/extension_list.cfg`，编辑器会自动完成）
 2. `F5` 运行
 3. 导入谱面 ZIP 或手动选 JSON / 曲绘 / 音乐
 4. 点击「播放」开始
