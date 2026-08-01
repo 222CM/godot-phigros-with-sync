@@ -60,6 +60,7 @@ func start_render(duration: float, music_path: String = "", set_fps: int = 60, s
 		Globals.current_time = i * frame_interval
 		print(Globals.current_time)
 		# 驱动主场景的模拟（音符移动、判定等）
+		# 世界场景是 import_screen 动态创建的同级节点（路径固定为 ../world）
 		$"../world".update_simulation()
 
 		# 等待 GPU 完成当前帧的绘制后截图

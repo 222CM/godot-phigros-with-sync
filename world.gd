@@ -3,105 +3,123 @@ extends Node2D
 # world.gd — 游戏世界主逻辑
 # World 场景是动态创建的（由 ImportScreen 在点击播放/渲染时实例化）
 #
-# 后端计算由 Sync 引擎（addons/sync 单扩展，0.5.0+）承担：
+# 后端计算由 Sync 引擎（addons/sync 单扩展，0.6.0+）承担：
 #   1. PhigrosChart 转换器把谱面 JSON 转成 SyncDocumentChart（Globals.chart）
-#   2. 本场景用 SyncChartPlayer 编译成只读 SyncChart
-#   3. 每帧 update_simulation() 以 chart_ms 采样线动画与音符位置
-# 本场景保留：判定线/音符实例化、多押标记、计分/combo、HUD、特效入口。
+#   2. 本场景用 SyncDocumentChart.compile() 编译成只读 SyncChart
+#   3. 每帧以 chart_ms 驱动各判定线；音符渲染由判定线的
+#      「时间窗口驱动 + SyncNodePool」管理（见 lines/line.gd）
+# 本场景保留：判定线实例化、计分/combo、HUD、特效入口。
 # ============================================================
 
 signal play_finished
 
-#预加载
+# 预加载
 var hit_effect_scene = preload("res://hit_effect/hit_effect.tscn")
 var line_scene = preload("res://lines/line.tscn")
 
-#线列表
+# 线列表
 var lines = []
 
 # Sync 编译后的只读谱面（后端数据源，由 line/note 采样）
 var play_chart: SyncChart
 var chart_offset_ms := 0.0
 
-#分数 & combo
+# 分数 & combo
 var score = 0
 var combo = 0
 var score_per_note = 0.0
 var total_duration = 0.0
 
+
 func _ready():
-	#清除旧数据
-	Globals.all_notes.clear()
+	play_chart = _compile_chart()
+	_spawn_lines(_build_multihit_map())
+	_setup_background()
+	_setup_audio()
+	_calc_score_per_note()
+	_create_hud()
 
-	# 编译 SyncDocumentChart → SyncChart（编译在 set_document_chart 内完成）
-	var player := SyncChartPlayer.new()
-	add_child(player)
-	player.set_document_chart(Globals.chart)
-	play_chart = player.get_play_chart()
-	chart_offset_ms = play_chart.get_offset_ms()
 
-	# 多押标记：hit_time_ms 相同的相邻音符成对标记（与原实现按 time 相等语义一致）
-	var times := []
+# ============================================================
+# 初始化
+# ============================================================
+
+# 编译 SyncDocumentChart → SyncChart（0.6.0 起提供独立编译入口，无需挂节点）
+func _compile_chart() -> SyncChart:
+	var pc: SyncChart = Globals.chart.compile()
+	chart_offset_ms = pc.get_offset_ms()
+	return pc
+
+
+# 多押标记：hit_time_ms 相同的相邻音符成对标记（与原实现按 time 相等语义一致）
+func _build_multihit_map() -> Dictionary:
+	var pairs: Array = []
 	for tid in play_chart.get_track_ids():
 		for nid in play_chart.get_note_ids_for_track(tid):
 			var hit_ms := float(play_chart.get_note_info(nid).hit_time_ms)
-			times.append({"note_id": nid, "hit_time_ms": hit_ms})
-			Globals.all_notes.append({"note_id": nid, "hit_time_ms": hit_ms})
-	times.sort_custom(func(a, b): return a.hit_time_ms < b.hit_time_ms)
-	var multihit := {}
-	if times.size() >= 2:
-		for i in range(times.size() - 1):
-			if is_equal_approx(times[i].hit_time_ms, times[i + 1].hit_time_ms):
-				multihit[times[i].note_id] = true
-				multihit[times[i + 1].note_id] = true
+			pairs.append({"note_id": nid, "hit_time_ms": hit_ms})
+	pairs.sort_custom(func(a, b): return a.hit_time_ms < b.hit_time_ms)
 
-	#生成所有判定线（一条线 = 一个 Sync 轨道）
+	var multihit := {}
+	if pairs.size() >= 2:
+		for i in range(pairs.size() - 1):
+			if is_equal_approx(pairs[i].hit_time_ms, pairs[i + 1].hit_time_ms):
+				multihit[pairs[i].note_id] = true
+				multihit[pairs[i + 1].note_id] = true
+	return multihit
+
+
+# 生成所有判定线（一条线 = 一个 Sync 轨道）
+func _spawn_lines(multihit: Dictionary) -> void:
 	for tid in play_chart.get_track_ids():
 		var l = line_scene.instantiate()
 		l.setup(self, tid, play_chart, multihit)
 		$lines_container.add_child(l)
 		lines.append(l)
 
-	#加载曲绘作为模糊变暗背景（Dual Kawase Blur 插件 → 实时模糊）
-	if Globals.background_path != "":
-		var img = Image.load_from_file(Globals.background_path)
-		if img:
-			var bg = $bg_layer/BlurY/SubViewport/BlurX/SubViewport/background
-			bg.texture = ImageTexture.create_from_image(img)
-			var a = 0.5
-			bg.self_modulate = Color(a, a, a, 1.0)  # 变暗 70%
-			var s = max(960.0 / img.get_width(), 540.0 / img.get_height())
-			bg.scale = Vector2(s, s)
-			# 调模糊强度（默认 8.0，越大越糊）
-			$bg_layer/BlurY.material.set_shader_parameter("radius", 100.0)
-			$bg_layer/BlurY/SubViewport/BlurX.material.set_shader_parameter("radius", 100.0)
 
-	#连接结束播放的信号
+# 加载曲绘作为模糊变暗背景（Dual Kawase Blur 插件 → 实时模糊）
+func _setup_background() -> void:
+	if Globals.background_path == "":
+		return
+	var img = Image.load_from_file(Globals.background_path)
+	if not img:
+		return
+	var bg = $bg_layer/BlurY/SubViewport/BlurX/SubViewport/background
+	bg.texture = ImageTexture.create_from_image(img)
+	var a = 0.5
+	bg.self_modulate = Color(a, a, a, 1.0)  # 变暗 70%
+	var s = max(960.0 / img.get_width(), 540.0 / img.get_height())
+	bg.scale = Vector2(s, s)
+	# 调模糊强度（默认 8.0，越大越糊）
+	$bg_layer/BlurY.material.set_shader_parameter("radius", 100.0)
+	$bg_layer/BlurY/SubViewport/BlurX.material.set_shader_parameter("radius", 100.0)
+
+
+# 连接结束播放信号 + 获取音乐总时长（用于进度条）
+func _setup_audio() -> void:
 	$music_player.finished.connect(func(): play_finished.emit())
+	if Globals.music_path != "" and Globals.music_path.get_extension().to_lower() == "ogg":
+		total_duration = AudioStreamOggVorbis.load_from_file(Globals.music_path).get_length()
 
-	#获取音乐总时长（用于进度条）
-	if Globals.music_path != "":
-		var ext = Globals.music_path.get_extension().to_lower()
-		if ext == "ogg":
-			total_duration = AudioStreamOggVorbis.load_from_file(Globals.music_path).get_length()
 
-	#计算每个 note 的分数（满分 1000000）
+# 计算每个 note 的分数（满分 1000000）
+func _calc_score_per_note() -> void:
 	score_per_note = 1000000.0 / max(1, play_chart.get_total_note_count())
 
-	#创建 HUD（combo/分数/AUTOPLAY）
-	_create_hud()
 
+# ============================================================
+# 每帧更新
+# ============================================================
 
 func _process(delta):
 	if Globals.mode == Globals.Mode.PLAY:
-		#更新时间
+		# 从音乐播放器实时同步逻辑时间
+		# get_playback_position() 获取当前播放位置（秒）
+		# get_time_since_last_mix() 补偿音频缓冲区延迟，提高同步精度
+		# RENDER 模式：RenderManager 在自己的循环里直接设 Globals.current_time
 		Globals.current_time = $music_player.get_playback_position() + AudioServer.get_time_since_last_mix()
 		update_simulation()
-
-# PLAY 模式：从音乐播放器实时同步逻辑时间
-# get_playback_position() 获取当前播放位置（秒）
-# get_time_since_last_mix() 补偿音频缓冲区延迟，提高同步精度
-# RENDER 模式：RenderManager 在自己的循环里直接设 Globals.current_time
 
 
 # 每帧调用核心更新函数
@@ -110,13 +128,16 @@ func update_simulation():
 	var chart_ms: float = Globals.current_time * 1000.0 + chart_offset_ms
 	for l in lines:
 		l.update_simulation(chart_ms)
-	# 更新进度条
-	if total_duration > 0:
-		var p = Globals.current_time / total_duration
-		$hud/progress_fill.anchor_right = p
-		$hud/progress_tip.anchor_left = p
-		$hud/progress_tip.anchor_right = p
-	pass
+	_update_progress()
+
+
+func _update_progress() -> void:
+	if total_duration <= 0:
+		return
+	var p = Globals.current_time / total_duration
+	$hud/progress_fill.anchor_right = p
+	$hud/progress_tip.anchor_left = p
+	$hud/progress_tip.anchor_right = p
 
 
 # ============================================================

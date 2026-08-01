@@ -8,6 +8,7 @@ extends Node
 #   - 场景树无脚本错误、所有线/音符节点正常生成
 #   - 逐帧位置有限（无 NaN/Inf）
 #   - 音符全部被 autoplay 判定并回收（短谱断言 combo 达标）
+#   - 节点池化生效：池峰值规模 < 总音符数（未一次性实例化全部节点）
 #
 # 用法：
 #   godot --headless --path . tests/world_smoke.tscn
@@ -58,20 +59,32 @@ func _run() -> void:
 		"world 生成 %d 条判定线（期望 %d）" % [world.lines.size(), play_chart.get_track_count()])
 
 	# 逐帧推进（等价 RenderManager 循环）
+	var max_active := 0        # 任意帧的峰值活跃节点数（时间窗口内）
+	var peak_pool_size := 0    # 池实例化峰值 = 各线 (active + free) 之和
 	for i in frames:
 		Globals.current_time = i / FPS
 		world.update_simulation()
+		var act := 0
+		var pool_size := 0
 		for l in world.lines:
 			if not l.position.is_finite() or not is_finite(l.rotation):
 				_fail("line %s 在 t=%.2f 出现非有限值: pos=%s rot=%s" % [l.track_id, Globals.current_time, l.position, l.rotation])
 				break
+			act += l.active_notes.size()
+			pool_size += l.pool.get_active_count() + l.pool.get_free_count()
+		max_active = max(max_active, act)
+		peak_pool_size = max(peak_pool_size, pool_size)
 		if world.combo >= total_notes:
-			break   # 全部判定后可提前结束
+			# 判定发生在 update_simulation 末尾，补跑一帧让已判定音符完成释放回池
+			Globals.current_time = (i + 1) / FPS
+			world.update_simulation()
+			break
 
 	var remaining := 0
 	for l in world.lines:
-		remaining += l.notes.size()
-	print("帧后: combo=%d/%d, 剩余未判定音符节点=%d" % [world.combo, total_notes, remaining])
+		remaining += l.active_notes.size()
+	print("帧后: combo=%d/%d, 峰值活跃节点=%d, 池峰值规模=%d, 剩余未判定节点=%d"
+		% [world.combo, total_notes, max_active, peak_pool_size, remaining])
 
 	# 短谱（mini 夹具应在帧窗口内全部判定）；任意谱至少推进了判定
 	if total_notes <= 20:
@@ -79,6 +92,12 @@ func _run() -> void:
 			"全部音符已判定并回收（combo=%d/%d, remaining=%d）" % [world.combo, total_notes, remaining])
 	else:
 		_expect(world.combo > 0, "已发生判定（combo=%d）" % world.combo)
+
+	# 池化生效：池实例化峰值必须小于总音符数（否则等于一次性加载全部节点）。
+	# 仅对足够大的谱面断言——极小谱（如 mini 10 音符）池化无收益，跳过强断言。
+	if total_notes >= 30:
+		_expect(peak_pool_size < total_notes,
+			"节点池复用生效：池峰值规模 %d < 总音符 %d" % [peak_pool_size, total_notes])
 
 	if total_notes <= 20:
 		_expect(world.score > 0 and world.score <= 1000000, "分数在 (0, 1000000]（%d）" % world.score)

@@ -39,8 +39,6 @@ var chart
 var hit_sounds = []
 
 
-var all_notes = []  #全局储存note，用于判断多押
-
 # 记录一次音效触发：在 time 秒时播放 sound_path
 func add_hit_sound(time: float, sound_path: String):
 	hit_sounds.append({"time": time, "file": sound_path})

@@ -24,8 +24,6 @@ var length: float = 0        # Hold 身体的目标长度（像素），由 set_
 var mh: bool              # 是否多押高亮
 var hide_start: bool      # 是否隐藏头部（判定后设为 true）
 
-var last_hitfx_tick: int = -1   # 上次生成打击特效的 tick
-
 func _ready() -> void:
 	# 开启 region 模式：三段 sprite 从同一张纹理中裁剪不同区域
 	$start.region_enabled = true
@@ -84,13 +82,9 @@ func set_length(l: float): #长度为像素单位
 	$end.offset = Vector2(0, -$body.region_rect.size.y * body_scale - $end.region_rect.size.y / 2.0)
 
 
-func _process(delta: float) -> void:
-	pass
-
-
 # ============================================================
 # set_hide_start — 设置头部 visible
-# 判定时刻调用，将头部变透明（判定后头部消失，身体和尾巴继续"
+# 判定时刻调用，将头部变透明（判定后头部消失，身体和尾巴继续）
 # ============================================================
 func set_hide_start(v: bool):
 	hide_start = v
