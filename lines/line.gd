@@ -86,12 +86,18 @@ func update_simulation(chart_ms: float, visible_global: Array) -> void:
 		if not in_window.has(note_id):
 			in_window[note_id] = true
 
-	# 1. 驱动（判定先行）：音符在 hit/end 帧先完成判定，
-	#    避免被下方释放逻辑抢先回收而漏判
+	# 1. 获取：窗口内尚未实例化的音符从池中取并绑定数据
+	for note_id in in_window:
+		if not active_notes.has(note_id):
+			_acquire_note(note_id, chart_ms)
+
+	# 2. 驱动（判定先行）：新获取的音符本帧立即计算 position.y——
+	#    bind 只设置了 x 坐标（y 为 0），若不驱动会闪现判定线一帧；
+	#    hit/end 帧先完成判定，避免被释放逻辑抢先回收而漏判
 	for n in active_notes.values():
 		n.update_simulation(chart_ms)
 
-	# 2. 释放：判定完成（HOLD 按住阶段保持激活），或离开窗口
+	# 3. 释放：判定完成（HOLD 按住阶段保持激活），或离开窗口
 	for note_id in active_notes.keys():
 		var n = active_notes[note_id]
 		if n.judged:
@@ -104,11 +110,6 @@ func update_simulation(chart_ms: float, visible_global: Array) -> void:
 				continue
 			_release_note(n)
 			active_notes.erase(note_id)
-
-	# 3. 获取：窗口内但尚未实例化的音符从池中取并绑定数据
-	for note_id in in_window:
-		if not active_notes.has(note_id):
-			_acquire_note(note_id, chart_ms)
 
 
 func _acquire_note(note_id: String, chart_ms: float) -> void:
