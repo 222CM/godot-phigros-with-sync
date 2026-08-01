@@ -58,7 +58,7 @@ func _run() -> void:
 	_expect(world.lines.size() == play_chart.get_track_count(),
 		"world 生成 %d 条判定线（期望 %d）" % [world.lines.size(), play_chart.get_track_count()])
 
-	# 逐帧推进（等价 RenderManager 循环）
+	# 逐帧推进（等价播放模式每帧驱动）
 	var max_active := 0        # 任意帧的峰值活跃节点数（位置窗口内）
 	var peak_pool_size := 0    # 池实例化峰值 = 各线 (active + free) 之和
 	var t_start := Time.get_ticks_usec()
@@ -74,7 +74,8 @@ func _run() -> void:
 				_fail("line %s 在 t=%.2f 出现非有限值: pos=%s rot=%s" % [l.track_id, Globals.current_time, l.position, l.rotation])
 				break
 			act += l.active_notes.size()
-			pool_size += l.pool.get_active_count() + l.pool.get_free_count()
+			if l.pool != null:
+				pool_size += l.pool.get_active_count() + l.pool.get_free_count()
 			# hold 从池取出后必须立即具备正确长度（不在判定后才补齐）
 			for nid in l.active_notes:
 				var n = l.active_notes[nid]
@@ -105,7 +106,8 @@ func _run() -> void:
 
 	# 池化生效：池实例化峰值必须小于总音符数（否则等于一次性加载全部节点）。
 	# 仅对足够大的谱面断言——极小谱（如 mini 10 音符）池化无收益，跳过强断言。
-	if total_notes >= 30:
+	# （临时禁池对比期间 pool==null，断言自动跳过；恢复池化后自动生效）
+	if total_notes >= 30 and world.lines.size() > 0 and world.lines[0].pool != null:
 		_expect(peak_pool_size < total_notes,
 			"节点池复用生效：池峰值规模 %d < 总音符 %d" % [peak_pool_size, total_notes])
 

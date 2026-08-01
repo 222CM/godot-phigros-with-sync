@@ -18,7 +18,6 @@ config/icon="res://icon.svg"
 [autoload]
 
 Globals="*uid://db8f484amhigu"
-RenderManager="*uid://du0u1duyjuq8"
 
 [display]
 

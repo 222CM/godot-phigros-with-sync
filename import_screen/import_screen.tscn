@@ -35,9 +35,3 @@ offset_top = 160.0
 offset_right = 300.0
 offset_bottom = 191.0
 text = "播放"
-
-[node name="render" type="Button" parent="." unique_id=1925323206]
-offset_top = 200.0
-offset_right = 300.0
-offset_bottom = 231.0
-text = "渲染"

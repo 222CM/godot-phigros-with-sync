@@ -1,10 +1,49 @@
 # godot-phigros-with-sync
 
-Phigros 官谱自动播放 + 视频渲染器，基于 Godot 4.6.3 开发。只支持官谱。
+Phigros 官谱自动播放器，基于 Godot 4.6.3 开发。只支持官谱。
 
 后端计算（BPM/时间换算、判定线动画采样、音符位置计算）由
-**[Sync](https://github.com/222CM/Sync) 节奏游戏引擎**（`addons/sync` 单一 GDExtension，0.6.1+）承担，
+**[Sync](https://github.com/222CM/Sync) 节奏游戏引擎**（`addons/sync` 单一 GDExtension，0.6.4+）承担，
 游戏侧只保留渲染、判定与计分。
+
+## 项目由来
+
+本项目由原项目 **godot-phigros** 改造而来。原项目为 Phigros 官谱自动播放器，
+同样基于 Godot 4.6.3 开发，其后端计算框架——包括 BPM/时间换算
+（`sec_per_Tick = 1.875 / bpm`）、speed 事件位移积分（手写梯形面积累计
+floorPosition）、判定线动画事件插值与音符位置计算——全部以 GDScript 实现。
+
+本次改造的核心工作是**将上述后端计算框架整体替换为 Sync 引擎**
+（C++ GDExtension，`BpmEventList` / `SpeedEventList` / 轴采样等），
+游戏侧保留原项目的渲染、判定与计分逻辑；随后在渲染层进一步引入
+`SyncNodePool` 节点池化与位置窗口可见性驱动等特性。原项目与本文档
+当前描述的后端结构（见「架构」）已不存在一一对应关系。
+
+## 性能
+
+以下为同设备、同一谱面（DESTRUCTION321 AT，2330 音符 / 24 条判定线）、
+debug 构建下的实测帧率（含渲染）：
+
+| 阶段 | 改造核心前（原项目，纯 GDScript） | 改造核心后（Sync 引擎 + 节点池） |
+|---|---|---|
+| 开局 | 约 316 fps，随音符判定销毁逐步上升 | 稳定约 1400 fps，low 帧不低于 1200 fps |
+
+改造前的帧率随音符存量递减（每帧全量更新所有未判定音符，工作量随时间
+衰减）；改造后帧率基本恒定——节点池 + 位置窗口使每帧计算量仅与屏幕内
+音符数相关，与谱面总音符量解耦。
+
+headless 纯逻辑（不含渲染）的逐音符成本对照，同一谱面（Godot 4.6.3，
+RENDER 模式逐帧驱动，`ms/帧`）：
+
+| 场景 | 原项目 | 改造后 | 差异 |
+|---|---|---|---|
+| 最坏（开局，2330 音符全量更新） | 1.94 ms/帧 | 0.29 ms/帧 | 约 6.7× 提升 |
+| 平均（全程 9462 帧） | 1.19 ms/帧 | 0.29 ms/帧 | 约 4.1× 提升 |
+| 最优（收尾，音符已几乎清空） | 0.13 ms/帧 | 0.29 ms/帧 | 原项目反超（改造后有固定每帧开销） |
+
+说明：改造后的固定开销来自每帧的批量可见查询与线动画轴采样，与音符
+存量无关；原项目在音符清空后退化为纯线动画插值，成本极低。因此两版本
+的差距随音符存量减少而收敛，性能优势主要体现在开局与密集段。
 
 ## 功能
 
@@ -13,10 +52,6 @@ Phigros 官谱自动播放 + 视频渲染器，基于 Godot 4.6.3 开发。只�
 - Dual Kawase Blur 曲绘模糊背景
 - 打击特效（逐帧动画 + easeOutQuart 粒子）
 - 多押高亮、Hold 缩短等视觉细节
-
-## 渲染模式（⚠️ 暂不可用）
-
-由于 ffmpeg 命令行长度限制，打击音效合成在大量 note 时会溢出。渲染功能已暂时废弃，待未来用预混合音轨方案修复。播放模式完全正常可用。
 
 ## 架构
 
@@ -56,7 +91,7 @@ SyncChart（只读编译谱面）
   离开窗口后 reset/release 回池复用。屏幕外音符不实例化、不参与每帧计算：
   节点数 ≈ 位置窗口内音符数（996 谱峰值 55、2330 压力谱峰值 138），纯逻辑帧耗时
   996 谱 0.29ms / 2330 压力谱 0.42ms。
-- **时间轴**：音乐播放位置 + 音频缓冲延迟补偿（PLAY 模式）/ 渲染帧时间（RENDER 模式），
+- **时间轴**：音乐播放位置 + 音频缓冲延迟补偿（PLAY 模式）/ 外部逐帧设置（RENDER 模式，测试用），
   每帧 `chart_ms = current_time × 1000 + offset`（Sync 约定 chart = audio + offset）。
 - **判定**：Sync 引擎不内置判定，autoplay 判定在游戏侧按 `hit_time_ms` / `end_time_ms` 触发。
 
@@ -64,9 +99,9 @@ SyncChart（只读编译谱面）
 
 | 组件 | 仓库 | 说明 |
 |---|---|---|
-| sync（单扩展） | https://github.com/222CM/Sync | 0.6.1 起提供 get_visible_note_ids 位置窗口参数化（window_lo/hi）、get_note_ids_in_time_window（按 hit 时间二分，免疫 speed 瞬移）、SyncDocumentChart.compile() 独立编译入口 |
+| sync（单扩展） | https://github.com/222CM/Sync | 0.6.4：get_visible_note_ids 位置窗口参数化（window_lo/hi）、get_note_ids_in_time_window（按 hit 时间二分）、SyncDocumentChart.compile() 独立编译入口；0.6.4 修复负速段批量可见查询二分游标漏检 |
 
-本项目 `addons/` 下已附带官方 0.6.1 构建（Windows x86_64 debug + release，godot-cpp 4.3，4.6.3/4.7 兼容）。
+本项目 `addons/` 下已附带官方 0.6.4 构建（Windows x86_64 debug + release，godot-cpp 4.3，4.6.3/4.7 兼容）。
 重新构建见仓库 README（`scons -f SConstruct.extension target=… platform=…`）。
 
 ## 运行
@@ -88,9 +123,8 @@ SyncChart（只读编译谱面）
 ├── notes/              # 音符节点（tap / hold / drag / flick，池化复用）
 ├── hit_effect/         # 打击特效
 ├── globals/            # 全局自动加载单例
-├── render_manager/     # 渲染管理器（废弃中）
 ├── note_resource/      # 音符纹理、音效
-├── addons/sync/        # Sync 0.6.1 单扩展（GDExtension，含 debug + release 构建）
+├── addons/sync/        # Sync 0.6.4 单扩展（GDExtension，含 debug + release 构建）
 └── tests/              # 后端参照对照测试 + 全流程冒烟测试（含池化断言）
 ```
 
@@ -112,4 +146,3 @@ godot --headless --path . tests/world_smoke.tscn -- --chart=<谱面.json> --fram
 - 每线 BPM 不同时按线缩放拍值近似（官谱通常全线同 BPM，样例 996 全谱 140）
 - `offset` 方向按 Sync 约定（chart = audio + offset）；样例 offset=0，未在含偏移官谱上实测
 - 低帧率下 note 移动有细微抖动（帧时序偏差，历史遗留）
-- 渲染模式暂时不可用（音效过多导致 ffmpeg 命令行溢出）

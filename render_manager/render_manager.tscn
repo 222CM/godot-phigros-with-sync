@@ -1,6 +1,0 @@
-[gd_scene format=3 uid="uid://dxvqmh3yfdt5k"]
-
-[ext_resource type="Script" uid="uid://du0u1duyjuq8" path="res://render_manager/render_manager.gd" id="1_rd3va"]
-
-[node name="RenderManager" type="Node" unique_id=2103125514]
-script = ExtResource("1_rd3va")

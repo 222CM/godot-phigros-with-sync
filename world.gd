@@ -123,7 +123,7 @@ func _process(delta):
 		# 从音乐播放器实时同步逻辑时间
 		# get_playback_position() 获取当前播放位置（秒）
 		# get_time_since_last_mix() 补偿音频缓冲区延迟，提高同步精度
-		# RENDER 模式：RenderManager 在自己的循环里直接设 Globals.current_time
+		# RENDER 模式（测试用）：外部逐帧直接设 Globals.current_time
 		Globals.current_time = $music_player.get_playback_position() + AudioServer.get_time_since_last_mix()
 		update_simulation()
 

@@ -4,29 +4,25 @@ extends CanvasLayer
 # 这是项目启动后第一个看到的界面，提供：
 #   1. 手动选择谱面、背景图、音乐文件
 #   2. 一键导入 ZIP 压缩包（自动解压识别文件类型）
-#   3. 播放模式 / 渲染模式的启动入口
-# 点击播放或渲染后隐藏自身，动态创建 World 场景
+#   3. 播放模式启动入口
+# 点击播放后隐藏自身，动态创建 World 场景
 # ============================================================
 
 # World 场景的预加载引用和实例
 var world_scene = preload("res://world.tscn")
-var world = null        # 当前活跃的 World 实例，用于渲染结束后清理
+var world = null        # 当前活跃的 World 实例，用于播放结束后清理
 
 # Phigros JSON → SyncDocumentChart 转换器（-s 脚本模式不注册全局 class_name，显式 preload）
 const PhigrosChart := preload("res://chart/phigros_chart.gd")
 
 func _ready():
-	# 六个按钮的信号连接：
-	# 前三个 → 手动选文件；zip → 一键导入；play/render → 启动
+	# 按钮的信号连接：
+	# 前三个 → 手动选文件；zip → 一键导入；play → 启动
 	$level_file.pressed.connect(func(): _pick_file("level"))
 	$pict_file.pressed.connect(func(): _pick_file("picture"))
 	$music_file.pressed.connect(func(): _pick_file("music"))
 	$zip_file.pressed.connect(_pick_zip)
-	$play.pressed.connect(func(): _start("play"))
-	$render.pressed.connect(func(): _start("render"))
-
-	# 渲染完成后自动回到导入界面
-	RenderManager.render_finished.connect(_on_render_finished)
+	$play.pressed.connect(_start)
 
 
 # ============================================================
@@ -151,7 +147,7 @@ func _extract_and_detect(zip_path: String):
 # 启动游戏
 # ============================================================
 
-func _start(mode: String):
+func _start():
 	# 必须选关卡和音乐才能启动
 	if Globals.level_path == "" or Globals.music_path == "":
 		print("请先选择关卡和音乐")
@@ -162,18 +158,11 @@ func _start(mode: String):
 	world = world_scene.instantiate()
 	add_sibling(world)      # World 成为 ImportScreen 的兄弟节点
 
-	if mode == "render":
-		# 渲染模式：获取音乐时长，交给 RenderManager 全速生成帧序列
-		var audio = _load_audio(Globals.music_path)
-		var duration = audio.get_length()
-		RenderManager.start_render(duration, Globals.music_path, 15)
-	else:
-		# 播放模式：World 开始运行，播放音乐
-		Globals.mode = Globals.Mode.PLAY
-		Globals.game_started = true
-		world.get_node("music_player").stream = _load_audio(Globals.music_path)
-		world.get_node("music_player").play()
-		world.play_finished.connect(_on_render_finished)
+	# 播放模式：World 开始运行，播放音乐
+	Globals.mode = Globals.Mode.PLAY
+	world.get_node("music_player").stream = _load_audio(Globals.music_path)
+	world.get_node("music_player").play()
+	world.play_finished.connect(_on_play_finished)
 
 
 # ============================================================
@@ -213,8 +202,8 @@ func _load_audio(path: String) -> AudioStream:
 	return null
 
 
-# 渲染结束回调：重新显示导入界面，清理旧 World
-func _on_render_finished():
+# 播放结束回调：重新显示导入界面，清理旧 World
+func _on_play_finished():
 	show()
 	if world:
 		world.queue_free()
