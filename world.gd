@@ -3,7 +3,7 @@ extends Node2D
 # world.gd — 游戏世界主逻辑
 # World 场景是动态创建的（由 ImportScreen 在点击播放/渲染时实例化）
 #
-# 后端计算由 Sync 引擎（sync_core + sync_play_kit）承担：
+# 后端计算由 Sync 引擎（addons/sync 单扩展，0.5.0+）承担：
 #   1. PhigrosChart 转换器把谱面 JSON 转成 SyncDocumentChart（Globals.chart）
 #   2. 本场景用 SyncChartPlayer 编译成只读 SyncChart
 #   3. 每帧 update_simulation() 以 chart_ms 采样线动画与音符位置

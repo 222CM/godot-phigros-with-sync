@@ -3,7 +3,7 @@
 Phigros 官谱自动播放 + 视频渲染器，基于 Godot 4.6.3 开发。只支持官谱。
 
 后端计算（BPM/时间换算、判定线动画采样、音符位置计算）由
-**[Sync](https://github.com/222CM) 节奏游戏引擎**（`sync_core` + `sync_play_kit` GDExtension）承担，
+**[Sync](https://github.com/222CM/Sync) 节奏游戏引擎**（`addons/sync` 单一 GDExtension，0.5.0+）承担，
 游戏侧只保留渲染、判定与计分。
 
 ## 功能
@@ -24,7 +24,7 @@ Phigros 官谱自动播放 + 视频渲染器，基于 Godot 4.6.3 开发。只�
 Phigros chart JSON
    │  chart/phigros_chart.gd（转换器）
    ▼
-SyncDocumentChart（sync_core 共享数据类）
+SyncDocumentChart（Sync 文档谱面）
    │  SyncChartPlayer.set_document_chart()（编译）
    ▼
 SyncChart（只读编译谱面）
@@ -51,11 +51,10 @@ SyncChart（只读编译谱面）
 
 | 组件 | 仓库 | 说明 |
 |---|---|---|
-| sync_core | https://github.com/222CM/SyncCore | 必装基础插件，注册 13 个共享数据类 |
-| sync_play_kit | https://github.com/222CM/SyncPlayKit | 运行时类 SyncChart / SyncChartPlayer |
+| sync（单扩展） | https://github.com/222CM/Sync | 0.5.0 起 SyncCore/SyncEditorKit/SyncPlayKit 合并为单一 GDExtension，19 个类由同一个 DLL 注册（`sync_library_init`） |
 
-本项目 `addons/` 下已附带 Windows x86_64 构建产物（debug，godot-cpp 4.3，4.6.3 兼容）。
-重新构建见各仓库 README（`scons -f SConstruct.extension` + `scons`）。
+本项目 `addons/` 下已附带官方 0.5.0 构建（Windows x86_64 debug + release，godot-cpp 4.3，4.6.3/4.7 兼容）。
+重新构建见仓库 README（`scons -f SConstruct.extension target=… platform=…`）。
 
 ## 运行
 
@@ -78,8 +77,7 @@ SyncChart（只读编译谱面）
 ├── globals/            # 全局自动加载单例
 ├── render_manager/     # 渲染管理器（废弃中）
 ├── note_resource/      # 音符纹理、音效
-├── addons/sync_core/   # Sync 基础插件（GDExtension）
-├── addons/sync_play_kit/  # Sync 播放插件（GDExtension）
+├── addons/sync/        # Sync 0.5.0 单扩展（GDExtension，含 debug + release 构建）
 └── tests/              # 后端参照对照测试 + 全流程冒烟测试
 ```
 
