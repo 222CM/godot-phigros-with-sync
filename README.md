@@ -3,7 +3,7 @@
 Phigros 官谱自动播放 + 视频渲染器，基于 Godot 4.6.3 开发。只支持官谱。
 
 后端计算（BPM/时间换算、判定线动画采样、音符位置计算）由
-**[Sync](https://github.com/222CM/Sync) 节奏游戏引擎**（`addons/sync` 单一 GDExtension，0.6.0+）承担，
+**[Sync](https://github.com/222CM/Sync) 节奏游戏引擎**（`addons/sync` 单一 GDExtension，0.6.1+）承担，
 游戏侧只保留渲染、判定与计分。
 
 ## 功能
@@ -47,14 +47,15 @@ SyncChart（只读编译谱面）
   没有"永久渲染"标签，表演谱存在 `speed=9999` 瞬移/传送段——音符可能**提前数秒到
   百余秒出现在屏幕上等待**（996 谱实测 73/996 音符在 hit 前 >5s 已进入屏幕范围），
   基于 hit 时间的时间窗口必然钳制它们。因此本层采用**批量可见查询驱动**：
-  每帧一次 `get_visible_note_ids`（Sync C++ 内循环，GDScript 侧无逐音符调用边界，
-  实测 2330 音符批量 0.005ms vs 逐音符查询 1.6ms）覆盖位置在 [-1,1] 内的音符
-  （含表演等待音符，与 hit 时间无关）；另以 hit 前 1.5s 时间窗口兜底
+  每帧一次 `get_visible_note_ids(chart_ms, 0.0, 4.0)`（Sync 0.6.1 位置窗口参数化，
+  C++ 内循环，GDScript 侧无逐音符调用边界，实测 2330 音符批量 0.005ms）——
+  **渲染区间 [0, 4]**：判定线后方（已越过）不显示（Phigros 语义），前方 4 屏
+  开始渲染（表演谱音符可从远处高速飞入）；另以 hit 前 20ms 时间窗口兜底
   （`get_note_ids_in_time_window`，防 speed=9999 一帧穿越、批量查询 cursor 漏检）。
   判定先行、释放后置（避免 hit/end 帧被释放逻辑抢先回收而漏判），判定完成或
   离开窗口后 reset/release 回池复用。屏幕外音符不实例化、不参与每帧计算：
-  节点数 ≈ 屏幕内音符数（996 谱峰值 52、2330 压力谱峰值 136），纯逻辑帧耗时
-  996 谱 0.27ms / 2330 压力谱 0.39ms（批量查询替代逐音符扫描后降 ~75%）。
+  节点数 ≈ 位置窗口内音符数（996 谱峰值 55、2330 压力谱峰值 138），纯逻辑帧耗时
+  996 谱 0.29ms / 2330 压力谱 0.42ms。
 - **时间轴**：音乐播放位置 + 音频缓冲延迟补偿（PLAY 模式）/ 渲染帧时间（RENDER 模式），
   每帧 `chart_ms = current_time × 1000 + offset`（Sync 约定 chart = audio + offset）。
 - **判定**：Sync 引擎不内置判定，autoplay 判定在游戏侧按 `hit_time_ms` / `end_time_ms` 触发。
@@ -63,9 +64,9 @@ SyncChart（只读编译谱面）
 
 | 组件 | 仓库 | 说明 |
 |---|---|---|
-| sync（单扩展） | https://github.com/222CM/Sync | 0.6.0 起提供 get_note_ids_in_time_window（按 hit 时间二分，免疫 speed 瞬移）、SyncDocumentChart.compile() 独立编译入口、step_ms/set_chart_time_ms 外部时间注入 |
+| sync（单扩展） | https://github.com/222CM/Sync | 0.6.1 起提供 get_visible_note_ids 位置窗口参数化（window_lo/hi）、get_note_ids_in_time_window（按 hit 时间二分，免疫 speed 瞬移）、SyncDocumentChart.compile() 独立编译入口 |
 
-本项目 `addons/` 下已附带官方 0.6.0 构建（Windows x86_64 debug + release，godot-cpp 4.3，4.6.3/4.7 兼容）。
+本项目 `addons/` 下已附带官方 0.6.1 构建（Windows x86_64 debug + release，godot-cpp 4.3，4.6.3/4.7 兼容）。
 重新构建见仓库 README（`scons -f SConstruct.extension target=… platform=…`）。
 
 ## 运行
@@ -89,7 +90,7 @@ SyncChart（只读编译谱面）
 ├── globals/            # 全局自动加载单例
 ├── render_manager/     # 渲染管理器（废弃中）
 ├── note_resource/      # 音符纹理、音效
-├── addons/sync/        # Sync 0.6.0 单扩展（GDExtension，含 debug + release 构建）
+├── addons/sync/        # Sync 0.6.1 单扩展（GDExtension，含 debug + release 构建）
 └── tests/              # 后端参照对照测试 + 全流程冒烟测试（含池化断言）
 ```
 

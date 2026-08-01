@@ -27,9 +27,10 @@ var pix_per_Y = window_size.y * 0.6       # = 324 px/单位（floorPosition → 
 
 const ABOVE := -1
 const BELOW := 1
-# 时间兜底：hit 前 FALLBACK_MS 内补漏（瞬移穿越窗口、批量可见查询漏检时；
-# 同时作为普通音符的提前量——hit 前 1.5s 即实例化，呈现完整飞行过程）
-const FALLBACK_MS := 1500.0
+# 时间兜底：hit 前 FALLBACK_MS 内补漏（瞬移穿越窗口、批量可见查询漏检时）。
+# 当前调为 20ms（约 1 帧）验证"兜底是否需要长提前量"——若判定仍全绿，
+# 说明位置查询 + 判定先行已覆盖飞跃音符，长提前量只是普通音符的观感余量。
+const FALLBACK_MS := 20.0
 
 var world                    # world 节点引用（判定/特效回调），由 world 注入
 var chart: SyncChart         # 编译后的谱面，由 world 注入
